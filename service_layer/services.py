@@ -16,14 +16,19 @@ def allocate(
     orderid: str,
     sku: str,
     qty: int,
-    repo: AbstractRepository,
-    session
+    uow: unit_of_work.AbstractUnitOfWork
 ) -> str:
-    batches = repo.list()
-    if not is_valid_sku(sku, batches):
-        raise InvalidSku(f'Invalid sku {sku}')
-    batchref = model.allocate(model.OrderLine(orderid, sku, qty), batches)
-    session.commit()
+    line = OrderLine(orderid, sku, qty)
+    # context manager
+    with uow:
+        batches = uow.batches.list()
+
+        if not is_valid_sku(sku, batches):
+            raise InvalidSku(f'Invalid sku {sku}')
+        
+        batchref = model.allocate(line, batches)
+        uow.commit()
+
     return batchref
 
 def add_batch(
