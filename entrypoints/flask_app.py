@@ -9,7 +9,7 @@ import config
 import service_layer.services as services
 import adapters.repository as repository
 
-orm.starts_mappers()
+orm.start_mappers()
 get_session = sessionmaker(bind=create_engine(config.get_postgres_uri()))
 app = Flask(__name__)
 
