@@ -3,7 +3,8 @@ import domain.model as model
 from datetime import date
 from typing import Optional
 from domain.model import OrderLine
-from adapters.repository import AbstractRepository
+from service_layer import unit_of_work
+from service_layer.unit_of_work import AbstractUnitOfWork
 
 
 class InvalidSku(Exception):
@@ -32,7 +33,7 @@ def allocate(
     return batchref
 
 def add_batch(
-    ref: str, sku: str, qty: int, eta: Optional[date], repo: AbstractRepository, session,
+    ref: str, sku: str, qty: int, eta: Optional[date], uow: AbstractUnitOfWork,
 ):
-    repo.add(model.Batch(ref, sku, qty, eta))
-    session.commit()
+    uow.batches.add(model.Batch(ref, sku, qty, eta))
+    uow.commit()

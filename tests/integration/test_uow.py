@@ -1,4 +1,5 @@
-from . import model
+from domain import model
+from service_layer import unit_of_work
 
 
 # helpers
