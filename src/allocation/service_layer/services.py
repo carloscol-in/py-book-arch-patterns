@@ -1,10 +1,10 @@
-import domain.model as model
+import allocation.domain.model as model
 
 from datetime import date
 from typing import Optional
-from domain.model import OrderLine
-from service_layer import unit_of_work
-from service_layer.unit_of_work import AbstractUnitOfWork
+from allocation.domain.model import OrderLine
+from allocation.service_layer import unit_of_work
+from allocation.service_layer.unit_of_work import AbstractUnitOfWork
 
 
 class InvalidSku(Exception):
@@ -20,6 +20,7 @@ def allocate(
     uow: unit_of_work.AbstractUnitOfWork
 ) -> str:
     line = OrderLine(orderid, sku, qty)
+    
     # context manager
     with uow:
         batches = uow.batches.list()
@@ -35,5 +36,6 @@ def allocate(
 def add_batch(
     ref: str, sku: str, qty: int, eta: Optional[date], uow: AbstractUnitOfWork,
 ):
-    uow.batches.add(model.Batch(ref, sku, qty, eta))
-    uow.commit()
+    with uow:
+        uow.batches.add(model.Batch(ref, sku, qty, eta))
+        uow.commit()

@@ -1,15 +1,18 @@
+# pylint: disable=attribute-defined-outside-init
+from __future__ import annotations
 import abc
-import config
-from adapters import repository
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.engine import create_engine
 
-DEFAULT_SESSION_FACTORY = sessionmaker(bind=create_engine(
-    config.get_postgres_uri(),
-))
+import allocation.config as config
+from allocation.adapters import repository
+
 
 class AbstractUnitOfWork(abc.ABC):
     batches: repository.AbstractRepository
+
+    def __enter__(self) -> AbstractUnitOfWork:
+        return self
 
     def __exit__(self, *args):
         self.rollback()
@@ -21,6 +24,13 @@ class AbstractUnitOfWork(abc.ABC):
     @abc.abstractmethod
     def rollback(self):
         raise NotImplementedError
+
+
+DEFAULT_SESSION_FACTORY = sessionmaker(
+    bind=create_engine(
+        config.get_postgres_uri(),
+    )
+)
 
 class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
     def __init__(self, session_factory=DEFAULT_SESSION_FACTORY):
