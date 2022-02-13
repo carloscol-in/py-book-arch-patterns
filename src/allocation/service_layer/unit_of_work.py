@@ -9,7 +9,7 @@ from allocation.adapters import repository
 
 
 class AbstractUnitOfWork(abc.ABC):
-    batches: repository.AbstractRepository
+    batches: repository.AbstractProductRepository
 
     def __enter__(self) -> AbstractUnitOfWork:
         return self
