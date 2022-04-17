@@ -1,6 +1,6 @@
 import allocation.domain.model as model
 import pytest
-import allocation.service_layer.services as services
+import allocation.service_layer.handlers as handlers
 import allocation.adapters.repository as repository
 from allocation.service_layer.unit_of_work import AbstractUnitOfWork
 
@@ -31,26 +31,26 @@ class FakeUnitOfWork(AbstractUnitOfWork):
 
 def test_returns_allocation():
     uow = FakeUnitOfWork()
-    services.add_batch("batch1", "COMPLICATED-LAMP", 100, None, uow)
-    result = services.allocate("o1", "COMPLICATED-LAMP", 10, uow)
+    handlers.add_batch("batch1", "COMPLICATED-LAMP", 100, None, uow)
+    result = handlers.allocate("o1", "COMPLICATED-LAMP", 10, uow)
     assert result == "batch1"
 
 def test_add_batch():
     uow = FakeUnitOfWork()
-    services.add_batch("b1", "CRUNCHY-ARMCHAIR", 100, None, uow)
+    handlers.add_batch("b1", "CRUNCHY-ARMCHAIR", 100, None, uow)
     assert uow.batches.get("b1") is not None
     assert uow.committed
 
 def test_allocate_returns_allocation():
     uow = FakeUnitOfWork()
-    services.add_batch("batch1", "COMPLICATED-LAMP", 100, None, uow)
-    result = services.allocate("o1", "COMPLICATED-LAMP", 10, uow)
+    handlers.add_batch("batch1", "COMPLICATED-LAMP", 100, None, uow)
+    result = handlers.allocate("o1", "COMPLICATED-LAMP", 10, uow)
     assert result == "batch1"
 
 
 def test_allocate_errors_for_invalid_sku():
     uow = FakeUnitOfWork()
-    services.add_batch("b1", "AREALSKU", 100, None, uow)
+    handlers.add_batch("b1", "AREALSKU", 100, None, uow)
 
-    with pytest.raises(services.InvalidSku, match="Invalid sku NONEXISTENTSKU"):
-        services.allocate("b1", "NONEXISTENTSKU", 10, uow)
+    with pytest.raises(handlers.InvalidSku, match="Invalid sku NONEXISTENTSKU"):
+        handlers.allocate("b1", "NONEXISTENTSKU", 10, uow)

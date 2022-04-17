@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 import allocation.adapters.orm as orm
 from allocation.service_layer import unit_of_work
 import allocation.domain.model as model
-import allocation.service_layer.services as services
+import allocation.service_layer.handlers as handlers
 
 app = Flask(__name__)
 orm.start_mappers()
@@ -17,7 +17,7 @@ def add_batch():
     eta = request.json['eta']
     if eta is not None:
         eta = datetime.fromisoformat(eta).date()
-    services.add_batch(
+    handlers.add_batch(
         request.json['ref'],
         request.json['sku'],
         request.json['qty'],
@@ -31,13 +31,13 @@ def add_batch():
 def allocate_endpoint():
     """Allocate"""
     try:
-        batchref = services.allocate(
+        batchref = handlers.allocate(
             request.json['orderid'], 
             request.json['sku'],
             request.json['qty'],
             unit_of_work.SqlAlchemyUnitOfWork()
         )
-    except (model.OutOfStock, services.InvalidSku) as e:
+    except (model.OutOfStock, handlers.InvalidSku) as e:
         return jsonify({'message': e}), 400
 
     return jsonify({'batchref': batchref}), 201
