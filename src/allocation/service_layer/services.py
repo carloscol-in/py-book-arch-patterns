@@ -5,6 +5,7 @@ from typing import Optional
 from allocation.domain.model import OrderLine
 from allocation.service_layer import unit_of_work
 from allocation.service_layer.unit_of_work import AbstractUnitOfWork
+from . import messagebus
 
 
 class InvalidSku(Exception):
@@ -23,19 +24,22 @@ def allocate(
     
     # context manager
     with uow:
-        batches = uow.batches.list()
+        product = uow.products.get(sku=line.sku)
 
-        if not is_valid_sku(sku, batches):
-            raise InvalidSku(f'Invalid sku {sku}')
+        if product is None:
+            raise InvalidSku(f'Invalid sku {line.sku}')
         
-        batchref = model.allocate(line, batches)
+        batchref = product.allocate(line)
         uow.commit()
-
-    return batchref
+        return batchref
 
 def add_batch(
     ref: str, sku: str, qty: int, eta: Optional[date], uow: AbstractUnitOfWork,
 ):
     with uow:
-        uow.batches.add(model.Batch(ref, sku, qty, eta))
+        product = uow.products.get(sku=sku)
+        if product is None:
+            product = model.Product(sku, batches=[])
+            uow.products.add(product)
+        product.batches.append(model.Batch(ref, sku, qty, eta))
         uow.commit()

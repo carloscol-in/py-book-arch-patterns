@@ -4,32 +4,25 @@ import allocation.service_layer.services as services
 import allocation.adapters.repository as repository
 from allocation.service_layer.unit_of_work import AbstractUnitOfWork
 
-class FakeRepository(repository.AbstractRepository):
+
+class FakeRepository(repository.AbstractProductRepository):
     """Fake repository"""
-    def __init__(self, batches):
-        self._batches = set(batches)
+    def __init__(self, products):
+        super().__init__()
+        self._products = set(products)
 
-    def add(self, batch):
-        self._batches.add(batch)
+    def _add(self, product):
+        self._products.add(product)
 
-    def get(self, reference):
-        return next(b for b in self._batches if b.reference == reference)
-
-    def list(self):
-        return list(self._batches)
-
-    @staticmethod
-    def for_batch(ref, sku, qty, eta=None):
-        return FakeRepository([
-            model.Batch(ref, sku, qty, eta)
-        ])
+    def _get(self, reference):
+        return next(b for b in self._products if b.reference == reference)
 
 class FakeUnitOfWork(AbstractUnitOfWork):
     def __init__(self):
-        self.batches = FakeRepository([])
+        self.products = FakeRepository([])
         self.committed = False
 
-    def commit(self):
+    def _commit(self):
         self.committed = True
 
     def rollback(self):
