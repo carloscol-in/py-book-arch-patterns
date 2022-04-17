@@ -1,12 +1,12 @@
-import email
-from allocation.domain import events
-import allocation.domain.model as model
-
 from datetime import date
 from typing import Optional
+
+from allocation.domain import events
+from allocation.adapters import email
 from allocation.domain.model import OrderLine
 from allocation.service_layer import unit_of_work
 from . import messagebus
+import allocation.domain.model as model
 
 
 class InvalidSku(Exception):
