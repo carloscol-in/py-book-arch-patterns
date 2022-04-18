@@ -3,8 +3,9 @@ from flask import Flask, jsonify, request
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from allocation.service_layer import messagebus, unit_of_work
+from allocation.domain import events
 import allocation.adapters.orm as orm
-from allocation.service_layer import unit_of_work
 import allocation.domain.model as model
 import allocation.service_layer.handlers as handlers
 
@@ -31,12 +32,11 @@ def add_batch():
 def allocate_endpoint():
     """Allocate"""
     try:
-        batchref = handlers.allocate(
-            request.json['orderid'], 
-            request.json['sku'],
-            request.json['qty'],
-            unit_of_work.SqlAlchemyUnitOfWork()
+        event = events.AllocationRequired(
+            request.json['orderid'], request.json['sku'], request.json['qty'],
         )
+        results = messagebus.handle(event, unit_of_work.SqlAlchemyUnitOfWork())
+        batchref = results.pop(0)
     except (model.OutOfStock, handlers.InvalidSku) as e:
         return jsonify({'message': e}), 400
 
