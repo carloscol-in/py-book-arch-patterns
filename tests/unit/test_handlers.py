@@ -54,10 +54,10 @@ class TestAllocate:
     def test_returns_allocation(self):
         uow = FakeUnitOfWork()
         messagebus.handle(events.BatchCreated('batch1', 'COMPLICATED-LAMP', 100, None), uow)
-        result = messagebus.handle(
+        results = messagebus.handle(
             events.AllocationRequired('o1', 'COMPLICATED-LAMP', 10), uow
         )
-        assert result == 'batch1'
+        assert results.pop(0) == 'batch1'
 
 
 class TestChangeBatchQuantity:
@@ -87,9 +87,58 @@ class TestChangeBatchQuantity:
         assert batch1.available_quantity == 10
         assert batch2.available_quantity == 50
 
-        messagebus.handle(events.BatchQuantityChanged('batch1', 25))
+        messagebus.handle(
+            events.BatchQuantityChanged('batch1', 25), uow
+        )
 
         # order1 and order2 will be deallocated, so we'll have 25 - 20
         assert batch1.available_quantity == 5
         # and 20 will be reallocated to the next batch
         assert batch2.available_quantity == 30
+
+
+class FakeMessageBus(messagebus.AbstractMessageBus):
+    def __init__(self):
+        self.events_published = []
+
+    def handle(self, event, uow):
+        self.events_published = []
+        queue = [event]
+
+        while queue:
+            event = queue.pop(0)
+
+            for handler in self.HANDLERS[type(event)]:
+                handler(event, uow=uow)
+                queue.extend(uow.collect_new_events())
+                if queue:
+                    self.events_published.extend(queue)
+
+
+def test_reallocates_if_necessary_isolated():
+    uow = FakeUnitOfWork()
+    mbus = FakeMessageBus()
+
+    # test setup as before
+    event_history = [
+        events.BatchCreated('batch1', 'INDIFFERENT-TABLE', 50, None),
+        events.BatchCreated('batch2', 'INDIFFERENT-TABLE', 50, date.today()),
+        events.AllocationRequired('order1', 'INDIFFERENT-TABLE', 20),
+        events.AllocationRequired('order2', 'INDIFFERENT-TABLE', 20),
+    ]
+    for e in event_history:
+        mbus.handle(e, uow)
+
+    [batch1, batch2] = uow.products.get(sku='INDIFFERENT-TABLE').batches
+    assert batch1.available_quantity == 10
+    assert batch2.available_quantity == 50
+
+
+    mbus.handle(events.BatchQuantityChanged('batch1', 25), uow)
+
+
+    # assert on new events emitted rather than downstream side-effects
+    [reallocation_event] = mbus.events_published
+    assert isinstance(reallocation_event, events.AllocationRequired)
+    assert reallocation_event.orderid in {'order1', 'order2'}
+    assert reallocation_event.sku == 'INDIFFERENT-TABLE'

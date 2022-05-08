@@ -9,7 +9,7 @@ from allocation.adapters import repository
 
 
 class AbstractUnitOfWork(abc.ABC):
-    products: repository.AbstractProductRepository
+    products: repository.AbstractRepository
 
     def __enter__(self) -> AbstractUnitOfWork:
         return self
@@ -46,7 +46,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.session_factory = session_factory
     
     def __enter__(self):
-        self.session = self.session_factory() # type: Session
+        self.session = self.session_factory()
         self.products = repository.SqlAlchemyRepository(self.session)
         return super().__enter__()
 
