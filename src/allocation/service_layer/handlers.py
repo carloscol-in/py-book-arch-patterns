@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 
 from allocation.domain import events
-from allocation.adapters import email
+from allocation.adapters import email, redis_eventpublisher
 from allocation.domain.model import OrderLine
 from allocation.service_layer import unit_of_work
 from . import messagebus
@@ -59,3 +59,8 @@ def change_batch_quantity(
         product = uow.products.get_by_batchref(batchref=event.ref)
         product.change_batch_quantity(ref=event.ref, qty=event.qty)
         uow.commit()
+
+def publish_allocated_event(
+    event: events.Allocated, uow: unit_of_work.AbstractUnitOfWork
+):
+    redis_eventpublisher.publish('line_allocated', event)
