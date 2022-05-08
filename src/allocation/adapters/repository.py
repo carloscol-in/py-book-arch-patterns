@@ -1,13 +1,40 @@
+import abc
 from typing import Protocol, Set
+from allocation.adapters import orm
 import allocation.domain.model as model
 
 
-class AbstractRepository(Protocol):
+class AbstractRepository(abc.ABC):
+    def __init__(self):
+        self.seen: Set[model.Product] = set()
+
     def add(self, product: model.Product):
-        ...
+        self._add(product)
+        self.seen.add(product)
 
     def get(self, sku) -> model.Product:
-        ...
+        product = self._get(sku)
+        if product:
+            self.seen.add(product)
+        return product
+
+    def get_by_batchref(self, batchref) -> model.Product:
+        product = self._get_by_batchref(batchref)
+        if product:
+            self.seen.add(product)
+        return product
+
+    @abc.abstractmethod
+    def _add(self, product: model.Product):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _get(self, sku) -> model.Product:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _get_by_batchref(self, batchref) -> model.Product:
+        raise NotImplementedError
 
 
 class TrackingRepository:
@@ -28,7 +55,7 @@ class TrackingRepository:
         return product
 
 
-class SqlAlchemyRepository:
+class SqlAlchemyRepository(AbstractRepository):
     def __init__(self, session):
         self.session = session
 
@@ -40,3 +67,11 @@ class SqlAlchemyRepository:
             .query(model.Product) \
             .filter_by(sku=sku) \
             .first()
+
+    def _get(self, sku):
+        return self.session.query(model.Product).filter_by(sku=sku).first()
+
+    def _get_by_batchref(self, batchref):
+        return self.session.query(model.Product).join(model.Batch).filter(
+            orm.batches.c.reference == batchref,
+        ).first()
