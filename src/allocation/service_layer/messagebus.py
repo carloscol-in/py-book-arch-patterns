@@ -84,6 +84,7 @@ def handle(message: Message, uow: unit_of_work.AbstractUnitOfWork):
 
 
 EVENT_HANDLERS: Dict[events.Event, List[Callable]] = {
+    events.Allocated: [handlers.publish_allocated_event],
     events.OutOfStock: [handlers.send_out_of_stock_notification],
 }
 
