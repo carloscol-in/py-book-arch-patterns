@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Optional
 
-from allocation.domain import events
+from allocation.domain import commands, events
 from allocation.adapters import email, redis_eventpublisher
 from allocation.domain.model import OrderLine
 from allocation.service_layer import unit_of_work
@@ -16,10 +16,10 @@ def is_valid_sku(sku, batches):
     return sku in {b.sku for b in batches}
 
 def allocate(
-    event: events.AllocationRequired,
+    command: commands.Allocate,
     uow: unit_of_work.AbstractUnitOfWork
 ) -> str:
-    line = OrderLine(event.orderid, event.sku, event.qty)
+    line = OrderLine(command.orderid, command.sku, command.qty)
     
     # context manager
     with uow:
@@ -64,3 +64,31 @@ def publish_allocated_event(
     event: events.Allocated, uow: unit_of_work.AbstractUnitOfWork
 ):
     redis_eventpublisher.publish('line_allocated', event)
+
+
+def add_allocation_to_read_model(
+    event: events.Allocated, uow: unit_of_work.AbstractUnitOfWork
+):
+    with uow:
+        uow.session.execute(
+            'INSERT INTO allocations_view (orderid, sku, batchref)'
+            ' VALUES (:orderid, :sku, :batchref)',
+            dict(orderid=event.orderid, sku=event.sku, batchref=event.batchref)
+        )
+        uow.commit()
+
+def remove_allocation_from_read_model(
+    event: events.Deallocated, uow: unit_of_work.AbstractUnitOfWork
+):
+    with uow:
+        uow.session.execute(
+            'DELETE FROM allocations_view'
+            ' WHERE orderid = :orderid AND sku = :sku',
+            dict(orderid=event.orderid, sku=event.sku)
+        )
+
+def add_allocation_to_read_model(event: events.Allocated, _):
+    redis_eventpublisher.update_readmodel(event.orderid, event.sku, event.batchref)
+
+def remove_allocation_from_read_model(event: events.Deallocated, _):
+    redis_eventpublisher.update_readmodel(event.orderid, event.sku, None)
