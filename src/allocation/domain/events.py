@@ -3,7 +3,16 @@ from datetime import date
 from typing import Optional
 
 class Event:
-    pass
+    ...
+
+
+@dataclass
+class Allocated(Event):
+    orderid: str
+    sku: str
+    qty: str
+    batchref: str
+
 
 @dataclass
 class OutOfStock(Event):
