@@ -1,7 +1,25 @@
+import pytest
+from datetime import date
+from sqlalchemy.orm import clear_mappers
+
 from allocation import views
+from allocation import bootstrap
 from allocation.domain import commands
 from allocation.service_layer import messagebus, unit_of_work
 
+today = date.today()
+
+
+@pytest.fixture
+def sqlite_bus(sqlite_session_factory):
+    bus = bootstrap.bootstrap(
+        start_orm=True,
+        uow=unit_of_work.SqlAlchemyUnitOfWork(sqlite_session_factory),
+        send_mail=lambda *args: None,
+        publish=lambda *args: None
+    )
+    yield bus
+    clear_mappers()
 
 def test_allocations_view(sqlite_session_factory):
     uow = unit_of_work.SqlAlchemyUnitOfWork(sqlite_session_factory)

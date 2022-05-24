@@ -1,11 +1,9 @@
-from datetime import date
-from typing import Optional
+from typing import Callable, Dict, List
 
 from allocation.domain import commands, events
-from allocation.adapters import email, redis_eventpublisher
+from allocation.adapters import redis_eventpublisher
 from allocation.domain.model import OrderLine
 from allocation.service_layer import unit_of_work
-from . import messagebus
 import allocation.domain.model as model
 
 
@@ -45,9 +43,9 @@ def add_batch(
 
 
 def send_out_of_stock_notification(
-    event: events.OutOfStock, uow: unit_of_work.AbstractUnitOfWork
+    event: events.OutOfStock, send_mail: Callable
 ):
-    email.send(
+    send_mail(
         'stock@made.com',
         f'Out of stock for {event.sku}'
     )
@@ -92,3 +90,16 @@ def add_allocation_to_read_model(event: events.Allocated, _):
 
 def remove_allocation_from_read_model(event: events.Deallocated, _):
     redis_eventpublisher.update_readmodel(event.orderid, event.sku, None)
+
+
+EVENT_HANDLERS: Dict[events.Event, List[Callable]] = {
+    events.Allocated: [publish_allocated_event, add_allocation_to_read_model],
+    events.Deallocated: [],
+    events.OutOfStock: [send_out_of_stock_notification],
+}
+
+COMMAND_HANDLERS: Dict[commands.Command, List[Callable]] = {
+    commands.Allocate: allocate,
+    commands.CreateBatch: add_batch,
+    commands.ChangeBatchQuantity: change_batch_quantity,
+}

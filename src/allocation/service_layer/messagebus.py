@@ -10,36 +10,62 @@ logger = logging.getLogger(__name__)
 
 Message = Union[commands.Command, events.Event]
 
-class AbstractMessageBus:
-    # HANDLERS: Dict[Type[events.Event], List[Callable]]
-    HANDLERS = {
-        events.OutOfStock: [handlers.send_out_of_stock_notification],
-        events.BatchCreated: [handlers.add_batch],
-        events.AllocationRequired: [handlers.allocate],
-        events.BatchQuantityChanged: [handlers.change_batch_quantity],
-    }
+class MessageBus:
+    def __init__(
+        self, uow: unit_of_work.AbstractUnitOfWork,
+        event_handlers: Dict[Type[events.Event], List[Callable]],
+        command_handlers: Dict[Type[commands.Command], List[Callable]]
+    ):
+        self._uow = uow
+        self._event_handlers = event_handlers
+        self._command_handlers = command_handlers
 
-    def handle(self, event: events.Event, uow: unit_of_work.AbstractUnitOfWork):
+    def handle(self, message: Message):
         results = []
-        queue = [event]
+        queue = [message]
         while queue:
-            event = queue.pop(0)
-            for handler in self.HANDLERS[type(event)]:
-                results.append(handler(event, uow=uow))
-                queue.extend(uow.collect_new_events())
+            message = queue.pop(0)
+            if isinstance(message, events.Event):
+                self._handle_event(message, queue)
+            elif isinstance(message, commands.Command):
+                cmd_result = self._handle_command(message, queue)
+                results.append(cmd_result)
+            else:
+                raise Exception(f'{message} was not an Event of Command')
         return results
-            
 
-class MessageBus(AbstractMessageBus):
-    HANDLERS = {
-        events.OutOfStock: [handlers.send_out_of_stock_notification],
-        events.BatchCreated: [handlers.add_batch],
-        events.AllocationRequired: [handlers.allocate],
-        events.BatchQuantityChanged: [handlers.change_batch_quantity],
-    }
+    def _handle_event(self, event: events.Event, queue: List):
+        for handler in self._event_handlers[type(event)]:
+            try:
+                for attempt in Retrying(
+                    stop=stop_after_attempt(3),
+                    wait=wait_exponential()
+                ):
+                    with attempt:
+                        logger.debug(
+                            f'handling event {event} with handler {handler}')
+                        handler(event)
+                        queue.extend(self._uow.collect_new_events())
+            except RetryError as retry_failure:
+                logger.error(
+                    'Failed to handle event %s times, giving up!',
+                    retry_failure.last_attempt.attempt_number
+                )
+                continue
+
+    def _handle_command(self, command: commands.Command, queue: List):
+        logger.debug('handling command %s', command)
+        try:
+            handler = self._command_handlers[type(command)]
+            result = handler(command)
+            queue.extend(self._uow.collect_new_events())
+            return result
+        except Exception:
+            logger.exception('Exception handling command %s', command)
+            raise
 
 def handle_event(event: events.Event, queue: List[Message], uow: unit_of_work.AbstractUnitOfWork):
-    for handler in EVENT_HANDLERS[type(event)]:
+    for handler in handlers.EVENT_HANDLERS[type(event)]:
         try:
             for attempt in Retrying(
                 stop=stop_after_attempt(3),
@@ -60,7 +86,7 @@ def handle_event(event: events.Event, queue: List[Message], uow: unit_of_work.Ab
 def handle_command(command: commands.Command, queue: List[Message], uow: unit_of_work.AbstractUnitOfWork):
     logger.debug('handling command %s', command)
     try:
-        handler = COMMAND_HANDLERS[type(command)]
+        handler = handlers.COMMAND_HANDLERS[type(command)]
         result = handler(command, uow=uow)
         queue.extend(uow.collect_new_events())
         return result
@@ -81,16 +107,3 @@ def handle(message: Message, uow: unit_of_work.AbstractUnitOfWork):
         else:
             raise Exception(f'{message} was not an Event of Command')
     return results
-
-
-EVENT_HANDLERS: Dict[events.Event, List[Callable]] = {
-    events.Allocated: [handlers.publish_allocated_event, handlers.add_allocation_to_read_model],
-    events.Deallocated: [],
-    events.OutOfStock: [handlers.send_out_of_stock_notification],
-}
-
-COMMAND_HANDLERS: Dict[commands.Command, List[Callable]] = {
-    commands.Allocate: handlers.allocate,
-    commands.CreateBatch: handlers.add_batch,
-    commands.ChangeBatchQuantity: handlers.change_batch_quantity,
-}
