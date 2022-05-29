@@ -1,6 +1,6 @@
 import json
 from tenacity import Retrying, stop_after_delay
-from tests.e2e.test_api import random_batchref, random_orderid, random_sku
+from ..random_refs import random_batchref, random_orderid, random_sku
 from . import api_client, redis_client
 
 
