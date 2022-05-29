@@ -1,12 +1,33 @@
-from datetime import date
+from collections import defaultdict
 import pytest
+from datetime import date
 
-from allocation.domain import events
+from allocation import bootstrap
+from allocation.adapters import notifications
+from allocation.domain import commands, events
 from allocation.service_layer import messagebus
 from allocation.service_layer.unit_of_work import AbstractUnitOfWork
 
 import allocation.adapters.repository as repository
 import allocation.service_layer.handlers as services
+
+
+def bootstrap_test_app():
+    return bootstrap.bootstrap(
+        start_orm=False,
+        uow=FakeUnitOfWork(),
+        send_mail=lambda *args: None,
+        publish=lambda *args: None
+    )
+
+
+class FakeNotifications(notifications.AbstractNotifications):
+
+    def __init__(self):
+        self.sent = defaultdict(list)
+
+    def send(self, destination, message):
+        self.sent[destination].append(message)
 
 
 class FakeRepository(repository.AbstractRepository):
@@ -41,29 +62,67 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         pass
 
 
+class FakeNotifications(notifications.AbstractNotifications):
+
+    def __init__(self):
+        self.sent = defaultdict(list)
+
+    def send(self, destination, message):
+        self.sent[destination].append(message)
+
+
+def bootstrap_test_app():
+    return bootstrap.bootstrap(
+        start_orm=False,
+        uow=FakeUnitOfWork(),
+        notifications=FakeNotifications(),
+        publish=lambda *args: None,
+    )
+
+
 class TestAddBatch:
     def test_for_new_product(self):
-        uow = FakeUnitOfWork()
-        messagebus.handle(
-            events.BatchCreated('b1', 'CRUNCHY-ARMCHAIR', 100, None), uow
+        bus = bootstrap_test_app()
+        bus.handle(
+            events.BatchCreated('b1', 'CRUNCHY-ARMCHAIR', 100, None)
         )
-        assert uow.products.get('CRUNCHY-ARMCHAIR') is not None
-        assert uow.committed
+        assert bus.uow.products.get('CRUNCHY-ARMCHAIR') is not None
+        assert bus.uow.committed
 
 class TestAllocate:
     def test_returns_allocation(self):
+        bus = bootstrap_test_app()
         uow = FakeUnitOfWork()
-        messagebus.handle(events.BatchCreated('batch1', 'COMPLICATED-LAMP', 100, None), uow)
+        bus.handle(events.BatchCreated('batch1', 'COMPLICATED-LAMP', 100, None), uow)
         results = messagebus.handle(
             events.AllocationRequired('o1', 'COMPLICATED-LAMP', 10), uow
         )
         assert results.pop(0) == 'batch1'
 
+    def test_sends_email_on_out_of_stock_error(self):
+        fake_notifs = FakeNotifications()
+        bus = bootstrap_test_app()
+        bus.handle(commands.CreateBatch('b1', 'POPULAR-CURTAINS', 9, None))
+        bus.handle(commands.Allocate('o1', 'POPULAR-CURTAINS', 10))
+        assert fake_notifs.sent['stock@made.com'] == [
+            f'Out of stock for POPULAR-CURTAINS',
+        ]
+
+    def test_sends_email_on_out_of_stock_error(self):
+        fake_notifs = FakeNotifications()
+        bus = bootstrap_test_app()
+        bus.handle(commands.CreateBatch('b1', 'POPULAR-CURTAINS', 9, None))
+        bus.handle(commands.Allocate('o1', 'POPULAR-CURTAINS', 10))
+        assert fake_notifs.sent['stock@made.com'] == [
+            f'Out of stock for POPULAR-CURTAINS',
+        ]
+
 
 class TestChangeBatchQuantity:
     def test_changes_available_quantity(self):
+        bus = bootstrap_test_app()
         uow = FakeUnitOfWork()
-        messagebus.handle(
+        bus.handle(
             events.BatchCreated('batch1', 'ADORABLE-SETTEE', 100, None), uow
         )
         [batch] = uow.products.get(sku='ADORABLE-SETTEE').batches
@@ -97,7 +156,7 @@ class TestChangeBatchQuantity:
         assert batch2.available_quantity == 30
 
 
-class FakeMessageBus(messagebus.AbstractMessageBus):
+class FakeMessageBus(messagebus.MessageBus):
     def __init__(self):
         self.events_published = []
 

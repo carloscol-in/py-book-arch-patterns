@@ -4,7 +4,7 @@ import traceback
 import pytest
 from allocation.domain import model
 from allocation.service_layer import unit_of_work
-from e2e.test_api import random_batchref, random_orderid, random_sku
+from ..e2e.test_api import random_batchref, random_orderid, random_sku
 
 
 # helpers
