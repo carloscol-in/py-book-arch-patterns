@@ -5,11 +5,10 @@ from datetime import date
 from allocation import bootstrap
 from allocation.adapters import notifications
 from allocation.domain import commands, events
-from allocation.service_layer import messagebus
+from allocation.service_layer import messagebus, handlers
 from allocation.service_layer.unit_of_work import AbstractUnitOfWork
 
 import allocation.adapters.repository as repository
-import allocation.service_layer.handlers as services
 
 
 def bootstrap_test_app():
@@ -89,6 +88,14 @@ class TestAddBatch:
         assert bus.uow.products.get('CRUNCHY-ARMCHAIR') is not None
         assert bus.uow.committed
 
+    def test_for_existing_product(self):
+        bus = bootstrap_test_app()
+        bus.handle(commands.CreateBatch("b1", "GARISH-RUG", 100, None))
+        bus.handle(commands.CreateBatch("b2", "GARISH-RUG", 99, None))
+        assert "b2" in [
+            b.reference for b in bus.uow.products.get("GARISH-RUG").batches
+        ]
+
 class TestAllocate:
     def test_returns_allocation(self):
         bus = bootstrap_test_app()
@@ -99,14 +106,18 @@ class TestAllocate:
         )
         assert results.pop(0) == 'batch1'
 
-    def test_sends_email_on_out_of_stock_error(self):
-        fake_notifs = FakeNotifications()
+    def test_errors_for_invalid_sku(self):
         bus = bootstrap_test_app()
-        bus.handle(commands.CreateBatch('b1', 'POPULAR-CURTAINS', 9, None))
-        bus.handle(commands.Allocate('o1', 'POPULAR-CURTAINS', 10))
-        assert fake_notifs.sent['stock@made.com'] == [
-            f'Out of stock for POPULAR-CURTAINS',
-        ]
+        bus.handle(commands.CreateBatch("b1", "AREALSKU", 100, None))
+
+        with pytest.raises(handlers.InvalidSku, match="Invalid sku NONEXISTENTSKU"):
+            bus.handle(commands.Allocate("o1", "NONEXISTENTSKU", 10))
+
+    def test_commits(self):
+        bus = bootstrap_test_app()
+        bus.handle(commands.CreateBatch("b1", "OMINOUS-MIRROR", 100, None))
+        bus.handle(commands.Allocate("o1", "OMINOUS-MIRROR", 10))
+        assert bus.uow.committed
 
     def test_sends_email_on_out_of_stock_error(self):
         fake_notifs = FakeNotifications()
@@ -121,19 +132,16 @@ class TestAllocate:
 class TestChangeBatchQuantity:
     def test_changes_available_quantity(self):
         bus = bootstrap_test_app()
-        uow = FakeUnitOfWork()
-        bus.handle(
-            events.BatchCreated('batch1', 'ADORABLE-SETTEE', 100, None), uow
-        )
-        [batch] = uow.products.get(sku='ADORABLE-SETTEE').batches
+        bus.handle(events.BatchCreated('batch1', 'ADORABLE-SETTEE', 100, None))
+        [batch] = bus.uow.products.get(sku='ADORABLE-SETTEE').batches
         assert batch.available_quantity == 100
 
-        messagebus.handle(events.BatchQuantityChanged('batch1', 50), uow)
+        messagebus.handle(events.BatchQuantityChanged('batch1', 50))
 
         assert batch.available_quantity == 50
 
     def test_reallocates_if_necessary(self):
-        uow = FakeUnitOfWork()
+        bus = bootstrap_test_app()
         event_history = [
             events.BatchCreated('batch1', 'INDIFERENT-TABLE', 50, None),
             events.BatchCreated('batch2', 'INDIFERENT-TABLE', 50, date.today()),
@@ -141,63 +149,16 @@ class TestChangeBatchQuantity:
             events.AllocationRequired('order2', 'INDIFERENT-TABLE', 20),
         ]
         for e in event_history:
-            messagebus.handle(e, uow)
-        [batch1, batch2] = uow.products.get(sku='INDIFERENT-TABLE').batches
+            bus.handle(e)
+        [batch1, batch2] = bus.uow.products.get(sku='INDIFERENT-TABLE').batches
         assert batch1.available_quantity == 10
         assert batch2.available_quantity == 50
 
-        messagebus.handle(
-            events.BatchQuantityChanged('batch1', 25), uow
+        bus.handle(
+            events.BatchQuantityChanged('batch1', 25)
         )
 
         # order1 and order2 will be deallocated, so we'll have 25 - 20
         assert batch1.available_quantity == 5
         # and 20 will be reallocated to the next batch
         assert batch2.available_quantity == 30
-
-
-class FakeMessageBus(messagebus.MessageBus):
-    def __init__(self):
-        self.events_published = []
-
-    def handle(self, event, uow):
-        self.events_published = []
-        queue = [event]
-
-        while queue:
-            event = queue.pop(0)
-
-            for handler in self.HANDLERS[type(event)]:
-                handler(event, uow=uow)
-                queue.extend(uow.collect_new_events())
-                if queue:
-                    self.events_published.extend(queue)
-
-
-def test_reallocates_if_necessary_isolated():
-    uow = FakeUnitOfWork()
-    mbus = FakeMessageBus()
-
-    # test setup as before
-    event_history = [
-        events.BatchCreated('batch1', 'INDIFFERENT-TABLE', 50, None),
-        events.BatchCreated('batch2', 'INDIFFERENT-TABLE', 50, date.today()),
-        events.AllocationRequired('order1', 'INDIFFERENT-TABLE', 20),
-        events.AllocationRequired('order2', 'INDIFFERENT-TABLE', 20),
-    ]
-    for e in event_history:
-        mbus.handle(e, uow)
-
-    [batch1, batch2] = uow.products.get(sku='INDIFFERENT-TABLE').batches
-    assert batch1.available_quantity == 10
-    assert batch2.available_quantity == 50
-
-
-    mbus.handle(events.BatchQuantityChanged('batch1', 25), uow)
-
-
-    # assert on new events emitted rather than downstream side-effects
-    [reallocation_event] = mbus.events_published
-    assert isinstance(reallocation_event, events.AllocationRequired)
-    assert reallocation_event.orderid in {'order1', 'order2'}
-    assert reallocation_event.sku == 'INDIFFERENT-TABLE'
