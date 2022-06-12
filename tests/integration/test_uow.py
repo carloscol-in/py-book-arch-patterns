@@ -9,11 +9,15 @@ from ..e2e.test_api import random_batchref, random_orderid, random_sku
 
 # helpers
 
-def insert_batch(session, ref, sku, qty, eta):
+def insert_batch(session, ref, sku, qty, eta, product_version=1):
     session.execute(
-        'INSERT INTO batches (reference, sku, _purchased_quantity, eta)'
-        '   VALUES (:ref, :sku, :qty, :eta)',
-        dict(ref=ref, sku=sku, qty=qty, eta=eta)
+        "INSERT INTO products (sku, version_number) VALUES (:sku, :version)",
+        dict(sku=sku, version=product_version),
+    )
+    session.execute(
+        "INSERT INTO batches (reference, sku, _purchased_quantity, eta)"
+        " VALUES (:ref, :sku, :qty, :eta)",
+        dict(ref=ref, sku=sku, qty=qty, eta=eta),
     )
 
 def get_allocated_batch_ref(session, orderid, sku):
@@ -22,7 +26,7 @@ def get_allocated_batch_ref(session, orderid, sku):
         dict(orderid=orderid, sku=sku)
     )
     [[batchref]] = session.execute(
-        'SELECT b.reference FROM allocations JOIN batches AS b ON batch_id = b.id'
+        'SELECT b.reference FROM allocations AS a JOIN batches AS b ON a.batch_id = b.id'
         '   WHERE orderline_id=:orderlineid', dict(orderlineid=orderlineid)
     )
     return batchref
@@ -87,7 +91,7 @@ def test_uow_can_retrieve_a_batch_and_allocate_to_it(session_factory):
 
     uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
     with uow:
-        batch = uow.batches.get(reference='batch1')
+        batch = uow.products.get_by_batchref(batchref='batch1')
         line = model.OrderLine('o1', 'HIPSTER-WORKBENCH', 10)
         batch.allocate(line)
         uow.commit()
