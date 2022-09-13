@@ -2,15 +2,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional, List, Set
+from allocation.domain import commands
 
 import allocation.domain.events as events
 
-
-@dataclass(unsafe_hash=True)
-class OrderLine:
-    orderid: str
-    sku: str
-    qty: int
 
 class Product:
     def __init__(self, sku: str, batches: List[Batch], version_number: int = 0):
@@ -43,9 +38,16 @@ class Product:
         batch._purchased_quantity = qty
         while batch.available_quantity < 0:
             line = batch.deallocate_one()
-            self.events.append(
-                events.AllocationRequired(line.orderid, line.sku, line.qty)
-            )
+            self.events.append(events.Deallocated(
+                line.orderid, line.sku, line.qty))
+
+
+@dataclass(unsafe_hash=True)
+class OrderLine:
+    orderid: str
+    sku: str
+    qty: int
+    
 
 class Batch:
     def __init__(self, ref: str, sku: str, qty: int, eta: Optional[date]):

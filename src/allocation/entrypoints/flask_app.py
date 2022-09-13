@@ -13,6 +13,7 @@ import allocation.service_layer.handlers as handlers
 app = Flask(__name__)
 bus = bootstrap.bootstrap()
 
+
 @app.route('/add_batch', methods=["POST"])
 def add_batch():
     """Add batch"""
@@ -35,20 +36,18 @@ def add_batch():
 def allocate_endpoint():
     """Allocate"""
     try:
-        event = events.AllocationRequired(
+        command = commands.Allocate(
             request.json['orderid'], request.json['sku'], request.json['qty'],
         )
-        results = bus.handle(event)
-        batchref = results.pop(0)
-    except (model.OutOfStock, handlers.InvalidSku) as e:
-        return jsonify({'message': e}), 400
+        bus.handle(command)
+    except handlers.InvalidSku as e:
+        return {'message': str(e)}, 400
 
-    return jsonify({'batchref': batchref}), 201
+    return "OK", 202
 
 @app.route('/allocations/<orderid>', methods=['GET'])
 def allocations_view_endpoint(orderid):
-    uow = unit_of_work.SqlAlchemyUnitOfWork()
-    result = views.allocations(orderid, uow)
+    result = views.allocations(orderid, bus.uow)
 
     if not result:
         return 'not found', 404

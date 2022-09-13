@@ -56,6 +56,7 @@ allocations_view = Table(
     metadata,
     Column("orderid", String(255)),
     Column("sku", String(255)),
+    Column("batchref", String(255)),
 )
 
 

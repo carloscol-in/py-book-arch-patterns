@@ -16,12 +16,19 @@ from tenacity import retry, stop_after_delay
 from allocation.adapters.orm import metadata, start_mappers
 from allocation import config
 
+pytest.register_assert_rewrite("tests.e2e.api_client")
+
 
 @pytest.fixture
 def in_memory_sqlite_db():
     engine = create_engine("sqlite:///:memory:")
     metadata.create_all(engine)
     return engine
+
+
+@pytest.fixture
+def sqlite_session_factory(in_memory_sqlite_db):
+    yield sessionmaker(bind=in_memory_sqlite_db)
 
 
 @pytest.fixture
@@ -47,26 +54,12 @@ def wait_for_redis_to_come_up():
     return r.ping()
 
 
-@pytest.fixture
-def sqlite_session_factory(in_memory_sqlite_db):
-    yield sessionmaker(bind=in_memory_sqlite_db)
-
-@pytest.fixture
-def session_factory(in_memory_sqlite_db):
-    start_mappers()
-    yield sessionmaker(bind=in_memory_sqlite_db)
-    clear_mappers()
-
-@pytest.fixture
-def session(session_factory):
-    return session_factory()
-
-
-@pytest.fixture
-def postgres_session(postgres_session_factory):
-    start_mappers()
-    yield sessionmaker(bind=postgres_session_factory)()
-    clear_mappers()
+@pytest.fixture(scope="session")
+def postgres_db():
+    engine = create_engine(config.get_postgres_uri(), isolation_level="SERIALIZABLE")
+    wait_for_postgres_to_come_up(engine)
+    metadata.create_all(engine)
+    return engine
 
 
 @pytest.fixture
@@ -74,13 +67,9 @@ def postgres_session_factory(postgres_db):
     yield sessionmaker(bind=postgres_db)
 
 
-@pytest.fixture(scope="session")
-def postgres_db():
-    engine = create_engine(config.get_postgres_uri(),
-                           isolation_level="SERIALIZABLE")
-    wait_for_postgres_to_come_up(engine)
-    metadata.create_all(engine)
-    return engine
+@pytest.fixture
+def postgres_session(postgres_session_factory):
+    return postgres_session_factory()
 
 
 @pytest.fixture
