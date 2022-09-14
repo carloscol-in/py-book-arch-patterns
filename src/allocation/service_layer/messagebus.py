@@ -19,16 +19,17 @@ class MessageBus:
         self.uow = uow
         self._event_handlers = event_handlers
         self._command_handlers = command_handlers
+        self._queue = []
 
     def handle(self, message: Message):
         results = []
-        queue = [message]
-        while queue:
-            message = queue.pop(0)
+        self._queue = [message]
+        while self._queue:
+            message = self._queue.pop(0)
             if isinstance(message, events.Event):
-                self._handle_event(message, queue)
+                self._handle_event(message, self._queue)
             elif isinstance(message, commands.Command):
-                cmd_result = self._handle_command(message, queue)
+                cmd_result = self._handle_command(message, self._queue)
                 results.append(cmd_result)
             else:
                 raise Exception(f'{message} was not an Event of Command')
@@ -37,20 +38,12 @@ class MessageBus:
     def _handle_event(self, event: events.Event, queue: List):
         for handler in self._event_handlers[type(event)]:
             try:
-                for attempt in Retrying(
-                    stop=stop_after_attempt(3),
-                    wait=wait_exponential()
-                ):
-                    with attempt:
-                        logger.debug(
-                            f'handling event {event} with handler {handler}')
-                        handler(event)
-                        queue.extend(self.uow.collect_new_events())
-            except RetryError as retry_failure:
-                logger.error(
-                    'Failed to handle event %s times, giving up!',
-                    retry_failure.last_attempt.attempt_number
-                )
+                logger.debug(
+                    f'handling event {event} with handler {handler}')
+                handler(event)
+                self._queue.extend(self.uow.collect_new_events())
+            except Exception as e:
+                logger.error('Exception handling event %s: %s', event, e)
                 continue
 
     def _handle_command(self, command: commands.Command, queue: List):
@@ -58,7 +51,7 @@ class MessageBus:
         try:
             handler = self._command_handlers[type(command)]
             result = handler(command)
-            queue.extend(self.uow.collect_new_events())
+            self._queue.extend(self.uow.collect_new_events())
             return result
         except Exception:
             logger.exception('Exception handling command %s', command)

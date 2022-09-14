@@ -1,19 +1,25 @@
 import threading
 import time
 import traceback
+from typing import List
 import pytest
 from allocation.domain import model
 from allocation.service_layer import unit_of_work
 from ..e2e.test_api import random_batchref, random_orderid, random_sku
 
+pytestmark = pytest.mark.usefixtures("mappers")
 
 # helpers
 
-def insert_batch(session, ref, sku, qty, eta):
+def insert_batch(session, ref, sku, qty, eta, product_version=1):
     session.execute(
-        'INSERT INTO batches (reference, sku, _purchased_quantity, eta)'
-        '   VALUES (:ref, :sku, :qty, :eta)',
-        dict(ref=ref, sku=sku, qty=qty, eta=eta)
+        "INSERT INTO products (sku, version_number) VALUES (:sku, :version)",
+        dict(sku=sku, version=product_version),
+    )
+    session.execute(
+        "INSERT INTO batches (reference, sku, _purchased_quantity, eta)"
+        " VALUES (:ref, :sku, :qty, :eta)",
+        dict(ref=ref, sku=sku, qty=qty, eta=eta),
     )
 
 def get_allocated_batch_ref(session, orderid, sku):
@@ -22,15 +28,41 @@ def get_allocated_batch_ref(session, orderid, sku):
         dict(orderid=orderid, sku=sku)
     )
     [[batchref]] = session.execute(
-        'SELECT b.reference FROM allocations JOIN batches AS b ON batch_id = b.id'
+        'SELECT b.reference FROM allocations AS a JOIN batches AS b ON a.batch_id = b.id'
         '   WHERE orderline_id=:orderlineid', dict(orderlineid=orderlineid)
     )
     return batchref
 
-def try_to_allocate(orderid, sku, exceptions):
+
+def test_uow_can_retrieve_a_batch_and_allocate_to_it(sqlite_session_factory):
+    session = sqlite_session_factory()
+    insert_batch(session, "batch1", "HIPSTER-WORKBENCH", 100, None)
+    session.commit()
+
+    uow = unit_of_work.SqlAlchemyUnitOfWork(sqlite_session_factory)
+    with uow:
+        product = uow.products.get(sku="HIPSTER-WORKBENCH")
+        line = model.OrderLine("o1", "HIPSTER-WORKBENCH", 10)
+        product.allocate(line)
+        uow.commit()
+
+    batchref = get_allocated_batch_ref(session, "o1", "HIPSTER-WORKBENCH")
+    assert batchref == "batch1"
+
+
+def test_rolls_back_uncommitted_work_by_default(sqlite_session_factory):
+    uow = unit_of_work.SqlAlchemyUnitOfWork(sqlite_session_factory)
+    with uow:
+        insert_batch(uow.session, "batch1", "MEDIUM-PLINTH", 100, None)
+
+    new_session = sqlite_session_factory()
+    rows = list(new_session.execute('SELECT * FROM "batches"'))
+    assert rows == []
+
+def try_to_allocate(orderid, sku, exceptions, session_factory):
     line = model.OrderLine(orderid, sku, 10)
     try:
-        with unit_of_work.SqlAlchemyUnitOfWork() as uow:
+        with unit_of_work.SqlAlchemyUnitOfWork(session_factory) as uow:
             product = uow.products.get(sku=sku)
             product.allocate(line)
             time.sleep(0.2)
@@ -49,9 +81,13 @@ def test_concurrent_updates_to_version_are_not_allowed(postgres_session_factory)
     session.commit()
 
     order1, order2 = random_orderid(1), random_orderid(2)
-    exceptions = [] # type: List[Exception]
-    try_to_allocate_order1 = lambda: try_to_allocate(order1, sku, exceptions)
-    try_to_allocate_order2 = lambda: try_to_allocate(order2, sku, exceptions)
+    exceptions: List = []
+    try_to_allocate_order1 = lambda: try_to_allocate(
+        order1, sku, exceptions, postgres_session_factory
+    )
+    try_to_allocate_order2 = lambda: try_to_allocate(
+        order2, sku, exceptions, postgres_session_factory
+    )
     thread1 = threading.Thread(target=try_to_allocate_order1)
     thread2 = threading.Thread(target=try_to_allocate_order2)
     thread1.start()
@@ -65,55 +101,19 @@ def test_concurrent_updates_to_version_are_not_allowed(postgres_session_factory)
     )
 
     assert version == 2
+    print("Exceptions: ", exceptions)
     [exception] = exceptions
-    assert 'could not serialize access due to concurrent update' in str(exception)
+    assert "could not serialize access due to concurrent update" in str(exception)
 
-    orders = list(session.execute(
-        "SELECT orderid FROM allocations",
+    orders = session.execute(
+        "SELECT orderid FROM allocations"
         " JOIN batches ON allocations.batch_id = batches.id"
         " JOIN order_lines ON allocations.orderline_id = order_lines.id"
         " WHERE order_lines.sku=:sku",
         dict(sku=sku),
-    ))
+    )
+    print("Orders", orders)
 
-    assert len(orders) == 1
-    with unit_of_work.SqlAlchemyUnitOfWork() as uow:
+    assert orders.rowcount == 1
+    with unit_of_work.SqlAlchemyUnitOfWork(postgres_session_factory) as uow:
         uow.session.execute('select 1')
-
-def test_uow_can_retrieve_a_batch_and_allocate_to_it(session_factory):
-    session = session_factory()
-    insert_batch(session, 'batch1', 'HIPSTER-WORKBENCH', 100, None)
-    session.commit()
-
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
-    with uow:
-        batch = uow.batches.get(reference='batch1')
-        line = model.OrderLine('o1', 'HIPSTER-WORKBENCH', 10)
-        batch.allocate(line)
-        uow.commit()
-
-    batchref = get_allocated_batch_ref(session, 'o1', 'HIPSTER-WORKBENCH')
-    assert batchref == 'batch1'
-
-def test_rolls_back_uncommitted_work_by_default(session_factory):
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
-    with uow:
-        insert_batch(uow.session, 'batch1', 'MEDIUM-PLINTH', 100, None)
-
-    new_session = session_factory()
-    rows = list(new_session.execute('SELECT * FROM "batches"'))
-    assert rows == []
-
-def test_rolls_back_on_error(session_factory):
-    class MyException(Exception):
-        pass
-
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
-    with pytest.raises(MyException):
-        with uow:
-            insert_batch(uow.session, 'batch1', 'LARGE-FORK', 100, None)
-            raise MyException()
-
-    new_session = session_factory()
-    rows = list(new_session.execute('SELECT * FROM "batches"'))
-    assert rows == []

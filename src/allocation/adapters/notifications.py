@@ -15,7 +15,6 @@ DEFAULT_PORT = config.get_email_host_and_port()["port"]
 
 
 class EmailNotifications(AbstractNotifications):
-
     def __init__(self, smtp_host=DEFAULT_HOST, port=DEFAULT_PORT):
         self.server = smtplib.SMTP(smtp_host, port=port)
         self.server.noop()

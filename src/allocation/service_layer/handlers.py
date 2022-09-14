@@ -1,7 +1,8 @@
+from dataclasses import asdict
 from typing import Callable, Dict, List
 
 from allocation.domain import commands, events
-from allocation.adapters import redis_eventpublisher
+from allocation.adapters import notifications, redis_eventpublisher
 from allocation.domain.model import OrderLine
 from allocation.service_layer import unit_of_work
 import allocation.domain.model as model
@@ -26,9 +27,8 @@ def allocate(
         if product is None:
             raise InvalidSku(f'Invalid sku {line.sku}')
         
-        batchref = product.allocate(line)
+        product.allocate(line)
         uow.commit()
-        return batchref
 
 def add_batch(
     event: events.BatchCreated, uow: unit_of_work.AbstractUnitOfWork,
@@ -43,9 +43,9 @@ def add_batch(
 
 
 def send_out_of_stock_notification(
-    event: events.OutOfStock, send_mail: Callable
+    event: events.OutOfStock, notifications: notifications.AbstractNotifications
 ):
-    send_mail(
+    notifications.send(
         'stock@made.com',
         f'Out of stock for {event.sku}'
     )
@@ -59,13 +59,15 @@ def change_batch_quantity(
         uow.commit()
 
 def publish_allocated_event(
-    event: events.Allocated, uow: unit_of_work.AbstractUnitOfWork
+    event: events.Allocated, 
+    publish: Callable
 ):
-    redis_eventpublisher.publish('line_allocated', event)
+    publish('line_allocated', event)
 
 
 def add_allocation_to_read_model(
-    event: events.Allocated, uow: unit_of_work.AbstractUnitOfWork
+    event: events.Allocated,
+    uow: unit_of_work.AbstractUnitOfWork
 ):
     with uow:
         uow.session.execute(
@@ -84,17 +86,24 @@ def remove_allocation_from_read_model(
             ' WHERE orderid = :orderid AND sku = :sku',
             dict(orderid=event.orderid, sku=event.sku)
         )
+        uow.commit()
 
-def add_allocation_to_read_model(event: events.Allocated, _):
-    redis_eventpublisher.update_readmodel(event.orderid, event.sku, event.batchref)
+def reallocate(
+    event: events.Deallocated,
+    uow: unit_of_work.AbstractUnitOfWork,
+):
+    allocate(commands.Allocate(**asdict(event)), uow=uow)
 
-def remove_allocation_from_read_model(event: events.Deallocated, _):
-    redis_eventpublisher.update_readmodel(event.orderid, event.sku, None)
+# def add_allocation_to_read_model(event: events.Allocated, _):
+#     redis_eventpublisher.update_readmodel(event.orderid, event.sku, event.batchref)
+
+# def remove_allocation_from_read_model(event: events.Deallocated, _):
+#     redis_eventpublisher.update_readmodel(event.orderid, event.sku, None)
 
 
 EVENT_HANDLERS: Dict[events.Event, List[Callable]] = {
     events.Allocated: [publish_allocated_event, add_allocation_to_read_model],
-    events.Deallocated: [],
+    events.Deallocated: [remove_allocation_from_read_model, reallocate],
     events.OutOfStock: [send_out_of_stock_notification],
 }
 

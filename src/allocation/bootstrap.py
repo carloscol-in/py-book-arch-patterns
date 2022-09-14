@@ -10,10 +10,13 @@ def bootstrap(
     notifications: notifications.AbstractNotifications = notifications.EmailNotifications(),
     publish: Callable = redis_eventpublisher.publish,
 ):
+    if notifications is None:
+        notifications = notifications.EmailNotifications()
+
     if start_orm:
         orm.start_mappers()
 
-    dependencies = {'uow': uow, 'send_mail': notifications.send, 'publish': publish}
+    dependencies = {'uow': uow, 'notifications': notifications, 'publish': publish}
 
     injected_event_handlers = {
         event_type: [

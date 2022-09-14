@@ -18,6 +18,7 @@ class Allocated(Event):
 class Deallocated(Event):
     orderid: str
     sku: str
+    qty: int
 
 
 @dataclass
